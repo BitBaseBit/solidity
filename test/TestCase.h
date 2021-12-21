@@ -29,6 +29,12 @@
 namespace solidity::frontend::test
 {
 
+struct TestData {
+	std::string signature;
+	std::string callData;
+	std::string contractName;
+};
+
 /**
  * Common superclass of anything that can be run via isoltest.
  */
@@ -72,12 +78,15 @@ public:
 	virtual void printUpdatedExpectations(std::ostream& _stream, std::string const& _linePrefix) const;
 
 	static bool isTestFilename(boost::filesystem::path const& _filename);
+	TestData m_testData;
 
 	/// Returns true, if the test case is supported in the current environment and false
 	/// otherwise which causes this test to be skipped.
 	/// This might check e.g. for restrictions on the EVM version.
 	/// The function throws an exception if there are unread settings.
 	bool shouldRun();
+
+	bool m_isSemanticTest = false;
 
 protected:
 	// Used by ASTJSONTest, the only TestCase class with a custom parser of the test files.

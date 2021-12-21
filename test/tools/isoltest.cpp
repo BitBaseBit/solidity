@@ -16,20 +16,23 @@
 */
 // SPDX-License-Identifier: GPL-3.0
 
-#include <libsolutil/CommonIO.h>
 #include <libsolutil/AnsiColorized.h>
+#include <libsolutil/CommonIO.h>
 
 #include <memory>
 #include <test/Common.h>
-#include <test/tools/IsolTestOptions.h>
-#include <test/InteractiveTests.h>
 #include <test/EVMHost.h>
+#include <test/InteractiveTests.h>
+#include <test/tools/IsolTestOptions.h>
 
 #include <boost/algorithm/string/replace.hpp>
 #include <boost/filesystem.hpp>
 
+#include "tools/nlohmann.hpp"
 #include <cstdlib>
+#include <fstream>
 #include <iostream>
+#include <map>
 #include <queue>
 #include <regex>
 #include <utility>
@@ -50,6 +53,10 @@ namespace fs = boost::filesystem;
 
 using TestCreator = TestCase::TestCaseCreator;
 using TestOptions = solidity::test::IsolTestOptions;
+using ContractPath = std::string;
+using ContractName = std::string;
+using FunctionSig = std::string;
+using CallData = std::string;
 
 struct TestStats
 {
@@ -89,21 +96,15 @@ private:
 	regex m_filterExpression;
 };
 
+
 class TestTool
 {
 public:
-	TestTool(
-		TestCreator _testCaseCreator,
-		TestOptions const& _options,
-		fs::path _path,
-		string _name
-	):
-		m_testCaseCreator(_testCaseCreator),
-		m_options(_options),
-		m_filter(TestFilter{_options.testFilter}),
-		m_path(std::move(_path)),
-		m_name(std::move(_name))
-	{}
+	TestTool(TestCreator _testCaseCreator, TestOptions const& _options, fs::path _path, string _name)
+		: m_testCaseCreator(_testCaseCreator), m_options(_options), m_filter(TestFilter{_options.testFilter}),
+		  m_path(std::move(_path)), m_name(std::move(_name)), m_filePath(m_path.string())
+	{
+	}
 
 	enum class Result
 	{
@@ -115,12 +116,11 @@ public:
 
 	Result process();
 
+	nlohmann::json m_testData;
+
 	static TestStats processPath(
-		TestCreator _testCaseCreator,
-		TestOptions const& _options,
-		fs::path const& _basepath,
-		fs::path const& _path
-	);
+		TestCreator _testCaseCreator, TestOptions const& _options, fs::path const& _basepath, fs::path const& _path);
+
 private:
 	enum class Request
 	{
@@ -137,6 +137,7 @@ private:
 	TestFilter m_filter;
 	fs::path const m_path;
 	string const m_name;
+	string const m_filePath;
 
 	unique_ptr<TestCase> m_test;
 
@@ -153,7 +154,7 @@ TestTool::Result TestTool::process()
 	{
 		if (m_filter.matches(m_path, m_name))
 		{
-			(AnsiColorized(cout, formatted, {BOLD}) << m_name << ": ").flush();
+			// (AnsiColorized(cout, formatted, {BOLD}) << m_name << ": ").flush();
 
 			m_test = m_testCaseCreator(TestCase::Config{
 				m_path.string(),
@@ -162,30 +163,34 @@ TestTool::Result TestTool::process()
 				m_options.enforceViaYul,
 				m_options.enforceCompileToEwasm,
 				m_options.enforceGasTest,
-				m_options.enforceGasTestMinValue
-			});
-			if (m_test->shouldRun())
+				m_options.enforceGasTestMinValue});
+			if (m_test->shouldRun() && m_test->m_isSemanticTest)
 			{
 				std::stringstream outputMessages;
 				switch (TestCase::TestResult result = m_test->run(outputMessages, "  ", formatted))
 				{
-					case TestCase::TestResult::Success:
-						AnsiColorized(cout, formatted, {BOLD, GREEN}) << "OK" << endl;
-						return Result::Success;
-					default:
-						AnsiColorized(cout, formatted, {BOLD, RED}) << "FAIL" << endl;
+				case TestCase::TestResult::Success:
+				{
+					if (!m_test->m_testData.callData.empty())
+						m_testData[m_test->m_testData.contractName][m_test->m_testData.signature]
+							= m_test->m_testData.callData;
+					// AnsiColorized(cout, formatted, {BOLD, GREEN}) << "OK" << endl;
+					return Result::Success;
+				}
+				default:
+					AnsiColorized(std::cout, formatted, {BOLD, RED}) << "FAIL" << endl;
 
-						AnsiColorized(cout, formatted, {BOLD, CYAN}) << "  Contract:" << endl;
-						m_test->printSource(cout, "    ", formatted);
-						m_test->printSettings(cout, "    ", formatted);
+					AnsiColorized(std::cout, formatted, {BOLD, CYAN}) << "  Contract:" << endl;
+					m_test->printSource(std::cout, "    ", formatted);
+					m_test->printSettings(std::cout, "    ", formatted);
 
-						cout << endl << outputMessages.str() << endl;
-						return result == TestCase::TestResult::FatalError ? Result::Exception : Result::Failure;
+					std::cout << endl << outputMessages.str() << endl;
+					return result == TestCase::TestResult::FatalError ? Result::Exception : Result::Failure;
 				}
 			}
 			else
 			{
-				AnsiColorized(cout, formatted, {BOLD, YELLOW}) << "NOT RUN" << endl;
+				// AnsiColorized(cout, formatted, {BOLD, YELLOW}) << "NOT RUN" << endl;
 				return Result::Skipped;
 			}
 		}
@@ -194,22 +199,19 @@ TestTool::Result TestTool::process()
 	}
 	catch (boost::exception const& _e)
 	{
-		AnsiColorized(cout, formatted, {BOLD, RED}) <<
-			"Exception during test: " << boost::diagnostic_information(_e) << endl;
+		AnsiColorized(std::cout, formatted, {BOLD, RED})
+			<< "Exception during test: " << boost::diagnostic_information(_e) << endl;
 		return Result::Exception;
 	}
 	catch (std::exception const& _e)
 	{
-		AnsiColorized(cout, formatted, {BOLD, RED}) <<
-			"Exception during test" <<
-			(_e.what() ? ": " + string(_e.what()) : ".") <<
-			endl;
+		AnsiColorized(std::cout, formatted, {BOLD, RED})
+			<< "Exception during test" << (_e.what() ? ": " + string(_e.what()) : ".") << endl;
 		return Result::Exception;
 	}
 	catch (...)
 	{
-		AnsiColorized(cout, formatted, {BOLD, RED}) <<
-			"Unknown exception during test." << endl;
+		AnsiColorized(std::cout, formatted, {BOLD, RED}) << "Unknown exception during test." << endl;
 		return Result::Exception;
 	}
 }
@@ -232,34 +234,34 @@ TestTool::Request TestTool::handleResponse(bool _exception)
 	}
 
 	if (_exception)
-		cout << "(e)dit/(s)kip/(q)uit? ";
+		std::cout << "(e)dit/(s)kip/(q)uit? ";
 	else
-		cout << "(e)dit/(u)pdate expectations/(s)kip/(q)uit? ";
-	cout.flush();
+		std::cout << "(e)dit/(u)pdate expectations/(s)kip/(q)uit? ";
+	std::cout.flush();
 
 	while (true)
 	{
-		switch(readStandardInputChar())
+		switch (readStandardInputChar())
 		{
 		case 's':
-			cout << endl;
+			std::cout << endl;
 			return Request::Skip;
 		case 'u':
 			if (_exception)
 				break;
 			else
 			{
-				cout << endl;
+				std::cout << endl;
 				updateTestCase();
 				return Request::Rerun;
 			}
 		case 'e':
-			cout << endl << endl;
+			std::cout << endl << endl;
 			if (system((m_options.editor + " \"" + m_path.string() + "\"").c_str()))
 				cerr << "Error running editor command." << endl << endl;
 			return Request::Rerun;
 		case 'q':
-			cout << endl;
+			std::cout << endl;
 			return Request::Quit;
 		default:
 			break;
@@ -268,12 +270,9 @@ TestTool::Request TestTool::handleResponse(bool _exception)
 }
 
 TestStats TestTool::processPath(
-	TestCreator _testCaseCreator,
-	TestOptions const& _options,
-	fs::path const& _basepath,
-	fs::path const& _path
-)
+	TestCreator _testCaseCreator, TestOptions const& _options, fs::path const& _basepath, fs::path const& _path)
 {
+	nlohmann::json testDataJson;
 	std::queue<fs::path> paths;
 	paths.push(_path);
 	int successCount = 0;
@@ -288,10 +287,8 @@ TestStats TestTool::processPath(
 		if (fs::is_directory(fullpath))
 		{
 			paths.pop();
-			for (auto const& entry: boost::iterator_range<fs::directory_iterator>(
-				fs::directory_iterator(fullpath),
-				fs::directory_iterator()
-			))
+			for (auto const& entry: boost::iterator_range<
+					 fs::directory_iterator>(fs::directory_iterator(fullpath), fs::directory_iterator()))
 				if (fs::is_directory(entry.path()) || TestCase::isTestFilename(entry.path().filename()))
 					paths.push(currentPath / entry.path().filename());
 		}
@@ -303,26 +300,25 @@ TestStats TestTool::processPath(
 		else
 		{
 			++testCount;
-			TestTool testTool(
-				_testCaseCreator,
-				_options,
-				fullpath,
-				currentPath.generic_path().string()
-			);
+			TestTool testTool(_testCaseCreator, _options, fullpath, currentPath.generic_path().string());
 			auto result = testTool.process();
+			if (fullpath.string().find("semanticTests") != std::string::npos)
+			{
+				testDataJson[fullpath.string()] = testTool.m_testData;
+			}
 
-			switch(result)
+			switch (result)
 			{
 			case Result::Failure:
 			case Result::Exception:
-				switch(testTool.handleResponse(result == Result::Exception))
+				switch (testTool.handleResponse(result == Result::Exception))
 				{
 				case Request::Quit:
 					paths.pop();
 					m_exitRequested = true;
 					break;
 				case Request::Rerun:
-					cout << "Re-running test case..." << endl;
+					std::cout << "Re-running test case..." << endl;
 					--testCount;
 					break;
 				case Request::Skip:
@@ -342,14 +338,13 @@ TestStats TestTool::processPath(
 			}
 		}
 	}
-
-	return { successCount, testCount, skippedCount };
-
+	if (!testDataJson.is_null())
+		std::cout << testDataJson.dump(4) << std::endl;
+	return {successCount, testCount, skippedCount};
 }
 
 namespace
 {
-
 void setupTerminal()
 {
 #if defined(_WIN32) && defined(ENABLE_VIRTUAL_TERMINAL_PROCESSING)
@@ -375,48 +370,40 @@ std::optional<TestStats> runTestSuite(
 	TestOptions const& _options,
 	fs::path const& _basePath,
 	fs::path const& _subdirectory,
-	string const& _name
-)
+	string const& _name)
 {
 	fs::path testPath{_basePath / _subdirectory};
 	bool formatted{!_options.noColor};
-
 	if (!fs::exists(testPath) || !fs::is_directory(testPath))
 	{
 		cerr << _name << " tests not found. Use the --testpath argument." << endl;
 		return std::nullopt;
 	}
 
-	TestStats stats = TestTool::processPath(
-		_testCaseCreator,
-		_options,
-		_basePath,
-		_subdirectory
-	);
+	TestStats stats = TestTool::processPath(_testCaseCreator, _options, _basePath, _subdirectory);
 
 	if (stats.skippedCount != stats.testCount)
 	{
-		cout << endl << _name << " Test Summary: ";
-		AnsiColorized(cout, formatted, {BOLD, stats ? GREEN : RED}) <<
-			stats.successCount <<
-			"/" <<
-			stats.testCount;
-		cout << " tests successful";
+		std::cout << endl << _name << " Test Summary: ";
+		AnsiColorized(std::cout, formatted, {BOLD, stats ? GREEN : RED})
+			<< stats.successCount << "/" << stats.testCount;
+		std::cout << " tests successful";
 		if (stats.skippedCount > 0)
 		{
-			cout << " (";
-			AnsiColorized(cout, formatted, {BOLD, YELLOW}) << stats.skippedCount;
-			cout<< " tests skipped)";
+			std::cout << " (";
+			AnsiColorized(std::cout, formatted, {BOLD, YELLOW}) << stats.skippedCount;
+			std::cout << " tests skipped)";
 		}
-		cout << "." << endl << endl;
+		std::cout << "." << endl << endl;
 	}
 	return stats;
 }
 
 }
 
-int main(int argc, char const *argv[])
+int main(int argc, char const* argv[])
 {
+	nlohmann::json lol;
 	try
 	{
 		setupTerminal();
@@ -437,10 +424,10 @@ int main(int argc, char const *argv[])
 			return 1;
 
 		if (options.disableSemanticTests)
-			cout << endl << "--- SKIPPING ALL SEMANTICS TESTS ---" << endl << endl;
+			std::cout << endl << "--- SKIPPING ALL SEMANTICS TESTS ---" << endl << endl;
 
 		TestStats global_stats{0, 0};
-		cout << "Running tests..." << endl << endl;
+		std::cout << "Running tests..." << endl << endl;
 
 		// Actually run the tests.
 		// Interactive tests are added in InteractiveTests.h
@@ -452,33 +439,27 @@ int main(int argc, char const *argv[])
 			if (ts.smt && options.disableSMT)
 				continue;
 
-			auto stats = runTestSuite(
-				ts.testCaseCreator,
-				options,
-				options.testPath / ts.path,
-				ts.subpath,
-				ts.title
-			);
+			auto stats = runTestSuite(ts.testCaseCreator, options, options.testPath / ts.path, ts.subpath, ts.title);
 			if (stats)
 				global_stats += *stats;
 			else
 				return 1;
 		}
 
-		cout << endl << "Summary: ";
-		AnsiColorized(cout, !options.noColor, {BOLD, global_stats ? GREEN : RED}) <<
-			 global_stats.successCount << "/" << global_stats.testCount;
-		cout << " tests successful";
+		std::cout << endl << "Summary: ";
+		AnsiColorized(std::cout, !options.noColor, {BOLD, global_stats ? GREEN : RED})
+			<< global_stats.successCount << "/" << global_stats.testCount;
+		std::cout << " tests successful";
 		if (global_stats.skippedCount > 0)
 		{
-			cout << " (";
-			AnsiColorized(cout, !options.noColor, {BOLD, YELLOW}) << global_stats.skippedCount;
-			cout << " tests skipped)";
+			std::cout << " (";
+			AnsiColorized(std::cout, !options.noColor, {BOLD, YELLOW}) << global_stats.skippedCount;
+			std::cout << " tests skipped)";
 		}
-		cout << "." << endl;
+		std::cout << "." << endl;
 
 		if (options.disableSemanticTests)
-			cout << "\nNOTE: Skipped semantics tests.\n" << endl;
+			std::cout << "\nNOTE: Skipped semantics tests.\n" << endl;
 
 		return global_stats ? 0 : 1;
 	}

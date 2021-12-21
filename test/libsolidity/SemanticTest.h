@@ -22,6 +22,7 @@
 #include <liblangutil/Exceptions.h>
 #include <libsolutil/AnsiColorized.h>
 
+#include <fstream>
 #include <iosfwd>
 #include <string>
 #include <vector>
@@ -29,6 +30,7 @@
 
 namespace solidity::frontend::test
 {
+
 
 struct AnnotatedEventSignature
 {
@@ -109,6 +111,8 @@ private:
 	bool m_gasCostFailure = false;
 	bool m_enforceGasCost = false;
 	u256 m_enforceGasCostMinValue;
+	std::string m_currentFileName;
+
 };
 
 }

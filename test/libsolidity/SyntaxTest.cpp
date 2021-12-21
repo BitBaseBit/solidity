@@ -39,6 +39,7 @@ namespace fs = boost::filesystem;
 
 SyntaxTest::SyntaxTest(string const& _filename, langutil::EVMVersion _evmVersion, bool _parserErrorRecovery): CommonSyntaxTest(_filename, _evmVersion)
 {
+	m_isSemanticTest = false;
 	m_optimiseYul = m_reader.boolSetting("optimize-yul", true);
 	m_parserErrorRecovery = _parserErrorRecovery;
 }

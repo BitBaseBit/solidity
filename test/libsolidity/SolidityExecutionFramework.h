@@ -39,6 +39,7 @@ class SolidityExecutionFramework: public solidity::test::ExecutionFramework
 {
 
 public:
+	solidity::frontend::CompilerStack m_compiler;
 	SolidityExecutionFramework(): m_showMetadata(solidity::test::CommonOptions::get().showMetadata) {}
 	explicit SolidityExecutionFramework(langutil::EVMVersion _evmVersion, std::vector<boost::filesystem::path> const& _vmPaths):
 		ExecutionFramework(_evmVersion, _vmPaths), m_showMetadata(solidity::test::CommonOptions::get().showMetadata)
@@ -76,7 +77,6 @@ public:
 	static std::string addPreamble(std::string const& _sourceCode);
 protected:
 
-	solidity::frontend::CompilerStack m_compiler;
 	bool m_compileViaYul = false;
 	bool m_compileToEwasm = false;
 	bool m_showMetadata = false;

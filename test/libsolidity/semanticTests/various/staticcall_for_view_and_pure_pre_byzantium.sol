@@ -32,9 +32,10 @@ contract D {
     }
 }
 // ====
-// compileViaYul: also
 // EVMVersion: <byzantium
+// compileViaYul: also
 // ----
 // f() -> 0x1
+// gas legacy: 103844
 // fview() -> 1
 // fpure() -> 1
