@@ -338,8 +338,13 @@ TestStats TestTool::processPath(
 			}
 		}
 	}
-	if (!testDataJson.is_null())
-		std::cout << testDataJson.dump(4) << std::endl;
+	ofstream testDataFile;
+	testDataFile.open("testData.json", std::ios_base::app);
+	if (!testDataJson.is_null()) {
+		std::cout << testDataJson.dump(2) << std::endl;
+		testDataFile << testDataJson.dump(4);
+		testDataFile.close();
+	}
 	return {successCount, testCount, skippedCount};
 }
 
